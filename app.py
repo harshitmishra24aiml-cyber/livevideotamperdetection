@@ -9,6 +9,10 @@ import cv2
 import json
 import time
 import shutil
+import tempfile
+import uuid
+import io
+import zipfile
 import pandas as pd
 import numpy as np
 from PIL import Image
@@ -121,12 +125,13 @@ st.markdown('<div class="main-title">🛡️ Live Video Tamper Detection System<
 st.markdown('<div class="sub-title">Real-Time Cryptographic Hash Chain Verification & Pixel-Level Forensic Analysis</div>', unsafe_allow_html=True)
 
 # Main Navigation Tabs
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📹 Video Capture Studio",
     "🔗 Hash Chain Explorer",
     "⚡ Tamper Attack Lab",
     "🔍 Forensic Verifier",
-    "📄 Audit Certificate & Report"
+    "📄 Audit Certificate & Report",
+    "📤 Upload & Verify Video"
 ])
 
 
@@ -525,3 +530,211 @@ Summary: {res.summary_message}
                 mime="text/plain",
                 use_container_width=True
             )
+
+
+
+# ==========================================
+# TAB 6: UPLOAD A COMPLETE VIDEO & VERIFY IT
+# ==========================================
+with tab6:
+    st.markdown("### 📤 Upload a Video for Full Forensic Verification")
+    st.write(
+        "Upload a recorded video, preview it, extract frames through the end of the file, "
+        "generate a SHA-256 digest for each selected frame, and create a verifiable hash chain."
+    )
+
+    uploaded_video = st.file_uploader(
+        "Choose a video",
+        type=["mp4", "mov", "avi", "mkv", "mpeg", "mpg"],
+        key="forensic_video_upload"
+    )
+
+    if uploaded_video is not None:
+        st.video(uploaded_video)
+        st.caption(
+            f"File: {uploaded_video.name} • "
+            f"Size: {uploaded_video.size / (1024 * 1024):.2f} MB"
+        )
+
+        sample_every = st.select_slider(
+            "Hash every Nth frame",
+            options=[1, 2, 3, 5, 10, 15, 30],
+            value=1,
+            help="Choose 1 to hash every decoded frame. Larger values reduce processing time but leave skipped frames unchecked."
+        )
+        if sample_every > 1:
+            st.warning(
+                f"Sampling is enabled: only every {sample_every}th decoded frame is protected. "
+                "Use 1 for frame-by-frame coverage."
+            )
+
+        process_upload = st.button(
+            "🔐 Process uploaded video & build hash chain",
+            type="primary",
+            use_container_width=True,
+            key="process_forensic_upload"
+        )
+
+        if process_upload:
+            suffix = os.path.splitext(uploaded_video.name)[1].lower() or ".mp4"
+            session_id = uuid.uuid4().hex[:12]
+            upload_root = os.path.join(DEFAULT_BASE_DIR, "uploads", session_id)
+            os.makedirs(upload_root, exist_ok=True)
+            temp_video_path = None
+            logger = None
+
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp_video:
+                    temp_video.write(uploaded_video.getbuffer())
+                    temp_video_path = temp_video.name
+
+                cap = cv2.VideoCapture(temp_video_path)
+                if not cap.isOpened():
+                    raise RuntimeError(
+                        "OpenCV could not read this video. Try exporting it as MP4 (H.264) and upload again."
+                    )
+
+                source_fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+                source_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                logger = AuditLogger(base_dir=upload_root)
+                logger.open_session(reset=True)
+
+                processed = 0
+                decoded = 0
+                progress = st.progress(0.0)
+                status = st.empty()
+                preview = st.empty()
+                frame_total = source_frame_count if source_frame_count > 0 else None
+
+                while True:
+                    ok, frame = cap.read()
+                    if not ok:
+                        break
+
+                    decoded += 1
+                    if (decoded - 1) % sample_every != 0:
+                        if frame_total:
+                            progress.progress(min(decoded / frame_total, 1.0))
+                        continue
+
+                    frame_hash = compute_frame_hash(frame)
+                    chain_hash = create_chain_hash(logger.previous_hash, processed + 1, frame_hash)
+                    logger.log_frame(processed + 1, frame_hash, chain_hash, frame=frame)
+                    processed += 1
+
+                    if processed == 1 or processed % max(1, int(source_fps) or 10) == 0:
+                        preview.image(
+                            cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
+                            caption=f"Processed frame {processed}",
+                            use_container_width=True
+                        )
+
+                    status.markdown(
+                        f"**Decoded:** {decoded:,} / {frame_total if frame_total else 'end of file'}  "
+                        f"| **Hashed:** {processed:,}  "
+                        f"| **Latest SHA-256:** `{frame_hash[:20]}…`"
+                    )
+                    if frame_total:
+                        progress.progress(min(decoded / frame_total, 1.0))
+
+                cap.release()
+                if processed == 0:
+                    raise RuntimeError("No frames were extracted. The uploaded video may be empty or unsupported.")
+
+                manifest = logger.close_session()
+                metadata = {
+                    "original_filename": uploaded_video.name,
+                    "file_size_bytes": uploaded_video.size,
+                    "source_fps": source_fps,
+                    "decoded_frame_count": decoded,
+                    "hashed_frame_count": processed,
+                    "sampling_every_n_frames": sample_every,
+                    "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                }
+                with open(os.path.join(upload_root, "source_video_metadata.json"), "w", encoding="utf-8") as mf:
+                    json.dump(metadata, mf, indent=2)
+
+                st.session_state["last_upload_evidence_dir"] = upload_root
+                st.session_state["last_upload_metadata"] = metadata
+                st.success(
+                    f"Evidence created successfully: {processed:,} frames hashed from "
+                    f"{decoded:,} decoded frames."
+                )
+                st.rerun()
+
+            except Exception as ex:
+                if logger is not None:
+                    try:
+                        logger.close_session()
+                    except Exception:
+                        pass
+                st.error(f"Video processing failed: {ex}")
+            finally:
+                if temp_video_path and os.path.exists(temp_video_path):
+                    try:
+                        os.remove(temp_video_path)
+                    except OSError:
+                        pass
+
+    evidence_dir = st.session_state.get("last_upload_evidence_dir")
+    metadata = st.session_state.get("last_upload_metadata")
+
+    if evidence_dir and os.path.isdir(evidence_dir):
+        st.markdown("---")
+        st.markdown("### 🔍 Uploaded Video Verification")
+        if metadata:
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Frames decoded", f"{metadata['decoded_frame_count']:,}")
+            k2.metric("Frames hashed", f"{metadata['hashed_frame_count']:,}")
+            k3.metric("Sampling", f"Every {metadata['sampling_every_n_frames']} frame(s)")
+
+        upload_verifier = VideoVerifier(base_dir=evidence_dir)
+        upload_result = upload_verifier.verify()
+
+        if upload_result.is_valid and upload_result.manifest_verified:
+            st.success("INTEGRITY VERIFIED — frame hashes, chain links and session signature passed.")
+        elif upload_result.is_valid:
+            st.warning("Frame and chain checks passed, but the session signature could not be validated.")
+        else:
+            st.error(upload_result.summary_message)
+
+        v1, v2, v3, v4 = st.columns(4)
+        v1.metric("Total checked", upload_result.total_checked)
+        v2.metric("Authentic", upload_result.authentic_count)
+        v3.metric("Tampered", upload_result.tampered_count)
+        v4.metric("Missing", upload_result.missing_count)
+
+        upload_rows = [{
+            "Frame": item.index,
+            "Status": item.status,
+            "Filename": item.filename,
+            "Details": item.details
+        } for item in upload_result.frame_results]
+        st.dataframe(pd.DataFrame(upload_rows), use_container_width=True, hide_index=True)
+
+        report_json = json.dumps(upload_result.to_dict(), indent=2)
+        st.download_button(
+            "⬇️ Download verification report (JSON)",
+            data=report_json,
+            file_name="uploaded_video_forensic_report.json",
+            mime="application/json"
+        )
+
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            for root, _, files in os.walk(evidence_dir):
+                for filename in files:
+                    full_path = os.path.join(root, filename)
+                    rel_path = os.path.relpath(full_path, evidence_dir)
+                    archive.write(full_path, arcname=os.path.join("video_evidence", rel_path))
+        st.download_button(
+            "📦 Download complete evidence package (ZIP)",
+            data=zip_buffer.getvalue(),
+            file_name="video_integrity_evidence.zip",
+            mime="application/zip"
+        )
+
+        st.caption(
+            "Evidence is stored in this Streamlit server's working directory. "
+            "Streamlit Cloud storage is ephemeral; download the ZIP to retain the evidence."
+        )

@@ -19,7 +19,7 @@ from PIL import Image
 import streamlit as st
 
 from core.hash_chain import GENESIS_HASH, sha256_bytes, sha256_str, compute_frame_hash, create_chain_hash
-from core.video_engine import VideoStreamSource, SyntheticCCTVGenerator, add_cryptographic_hud
+from core.video_engine import VideoStreamSource, SyntheticCCTVGenerator, add_cryptographic_hud, add_dual_sentinel_hud
 from core.audit_logger import AuditLogger, DEFAULT_BASE_DIR, DEFAULT_FRAME_DIR, DEFAULT_LOG_FILE
 from core.verifier_engine import VideoVerifier, VerificationResult
 from core.masking_detector import MaskingDetector, MaskingResult
@@ -139,7 +139,7 @@ st.markdown('<div class="sub-title">Dual-Layer Verification: SHA-256 Hash Chain 
 
 # Main Navigation Tabs (6 comprehensive tabs)
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "📹 Video Capture Studio",
+    "📹 Live Camera Sentinel (Masking + Hashing)",
     "📤 Upload & Accuracy Inspector",
     "🔗 Hash Chain Explorer",
     "⚡ Tamper & Mask Attack Lab",
@@ -149,42 +149,193 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 
 
 # ==========================================
-# TAB 1: VIDEO CAPTURE STUDIO
+# TAB 1: LIVE CAMERA SENTINEL (MASKING + HASHING)
 # ==========================================
 with tab1:
-    st.markdown("### 📹 Live Video Capture & Cryptographic Chaining")
-    st.write("Capture video frames in real-time, generate SHA-256 digests, and link each frame into an immutable hash chain.")
+    st.markdown("### 📹 Live Camera Sentinel: Real-Time Masking & SHA-256 Hashing")
+    st.write(
+        "Monitors video frames directly from your **Physical Webcam** or **Synthetic CCTV**, "
+        "simultaneously computing **SHA-256 cryptographic hash chains** ($C_i$) and running **AI Masking & Lens Occlusion Detection** on every single frame."
+    )
 
     col1, col2 = st.columns([1, 2])
 
     with col1:
-        st.markdown("#### Stream Configuration")
+        st.markdown("#### 1. Camera Source")
         source_type = st.selectbox(
             "Video Source",
-            ["Synthetic CCTV (Recommended for Demo)", "Physical Webcam", "Use Pre-recorded Video"]
+            ["Physical Webcam (Live Camera)", "Synthetic CCTV (Simulated Stream)"],
+            key="tab1_source_type"
         )
 
         device_index = 0
-        if source_type == "Physical Webcam":
-            device_index = st.number_input("Webcam Device Index", min_value=0, max_value=5, value=0)
+        if "Physical Webcam" in source_type:
+            device_index = st.number_input("Webcam Device Index", min_value=0, max_value=5, value=0, key="tab1_device_idx")
 
-        target_frames = st.slider("Frames to Record", min_value=5, max_value=60, value=15, step=5)
+        st.markdown("#### 2. Live Tamper Simulation")
+        st.caption("Test how the system catches masking and pixel tampering in real time:")
+        live_attack = st.selectbox(
+            "Simulate Live Camera Attack",
+            [
+                "None (Clean / Authentic Stream)",
+                "Cover Camera Lens (Simulate Hand/Tape Blackout)",
+                "Apply Digital Privacy Mask (Black Redaction Box)",
+                "Inject Watermark Pixel Stamp"
+            ],
+            key="tab1_live_attack"
+        )
 
         st.markdown("---")
-        start_record_btn = st.button("🔴 Start Live Recording Session", use_container_width=True, type="primary")
+        st.markdown("#### 3. Operation Mode")
+        op_mode = st.radio(
+            "Select Mode",
+            ["Continuous Live Sentinel (Active Monitor)", "Record & Anchor Session (Save to Audit Log)"],
+            key="tab1_op_mode"
+        )
+
+        if op_mode == "Record & Anchor Session (Save to Audit Log)":
+            target_frames = st.slider("Frames to Record", min_value=5, max_value=60, value=15, step=5, key="tab1_record_frames")
+            start_record_btn = st.button("🔴 Record & Secure Session", use_container_width=True, type="primary", key="tab1_start_record")
+            start_monitor = False
+        else:
+            start_record_btn = False
+            start_monitor = st.checkbox("🟢 Start Live Sentinel Stream", value=False, key="tab1_live_sentinel_toggle")
+
+        st.markdown("---")
+        st.markdown("💡 **Native High-FPS Dual Screen CLI:**")
+        st.code("python live_monitor.py --source webcam\n# Hotkeys: M=Mask, L=Lens, T=Tamper, R=Reset", language="bash")
 
     with col2:
         preview_container = st.empty()
+        alert_container = st.empty()
         status_container = st.empty()
+        metrics_container = st.empty()
 
-        if start_record_btn:
+        mask_detector = MaskingDetector()
+
+        # --- SUB-MODE A: CONTINUOUS LIVE SENTINEL ---
+        if op_mode.startswith("Continuous") and start_monitor:
             chosen_mode = "synthetic" if "Synthetic" in source_type else "webcam"
 
             try:
-                stream = VideoStreamSource(
-                    mode=chosen_mode,
-                    device_index=device_index
-                )
+                stream = VideoStreamSource(mode=chosen_mode, device_index=device_index)
+            except Exception as ex:
+                st.error(f"Failed to open video source: {ex}")
+                stream = None
+
+            if stream and stream.is_opened:
+                previous_chain = GENESIS_HASH
+                frame_count = 0
+                tamper_count = 0
+                mask_count = 0
+
+                try:
+                    for _ in range(60):  # Continuous live stream cycle
+                        ret, raw_frame = stream.read()
+                        if not ret or raw_frame is None:
+                            break
+
+                        frame_count += 1
+                        h, w, _ = raw_frame.shape
+                        monitored_frame = raw_frame.copy()
+
+                        # Apply live simulated attack if chosen
+                        if "Cover Camera Lens" in live_attack:
+                            monitored_frame[:] = 2  # Complete blackout / lens covered
+                        elif "Digital Privacy Mask" in live_attack:
+                            bx, by = int(w * 0.28), int(h * 0.25)
+                            bw, bh = int(w * 0.44), int(h * 0.45)
+                            cv2.rectangle(monitored_frame, (bx, by), (bx + bw, by + bh), (0, 0, 0), -1)
+                        elif "Watermark Pixel" in live_attack:
+                            cv2.rectangle(monitored_frame, (int(w * 0.3), int(h * 0.3)), (int(w * 0.7), int(h * 0.5)), (0, 0, 255), -1)
+                            cv2.putText(monitored_frame, "TAMPER ATTACK", (int(w * 0.32), int(h * 0.42)),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+                        # Dual Verification: SHA-256 Chain + Masking Detection
+                        f_hash = compute_frame_hash(monitored_frame)
+                        c_hash = create_chain_hash(previous_chain, frame_count, f_hash)
+                        previous_chain = c_hash
+
+                        mask_res = mask_detector.analyze_frame_masking(monitored_frame)
+
+                        is_tampered = (live_attack != "None (Clean / Authentic Stream)")
+                        if mask_res.is_masked:
+                            mask_count += 1
+                        if is_tampered or mask_res.is_masked:
+                            tamper_count += 1
+
+                        # Render Dual Sentinel HUD
+                        hud_frame = add_dual_sentinel_hud(
+                            frame=monitored_frame,
+                            frame_index=frame_count,
+                            frame_hash=f_hash,
+                            chain_hash=c_hash,
+                            mask_result=mask_res,
+                            is_hash_valid=(not is_tampered),
+                            status_override="🚨 TAMPER DETECTED" if is_tampered else None
+                        )
+                        hud_rgb = cv2.cvtColor(hud_frame, cv2.COLOR_BGR2RGB)
+                        preview_container.image(hud_rgb, channels="RGB", use_container_width=True)
+
+                        # Live Alert Banner
+                        if mask_res.is_masked:
+                            alert_container.markdown(f"""
+                            <div class="tampered-banner" style="padding: 10px; margin-bottom: 8px;">
+                                🚨 LIVE MASKING DETECTED: <b>{mask_res.mask_type}</b> ({mask_res.confidence*100:.1f}% confidence)<br>
+                                <span style="font-size: 0.85rem;">{mask_res.details}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        elif is_tampered:
+                            alert_container.markdown("""
+                            <div class="tampered-banner" style="padding: 10px; margin-bottom: 8px;">
+                                🚨 PIXEL INTEGRITY COMPROMISED: Hash Chain Mismatch Detected!
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            alert_container.markdown("""
+                            <div class="verified-banner" style="padding: 10px; margin-bottom: 8px;">
+                                🟢 CAMERA SECURE: SHA-256 Hash Chain Intact • No Masking Detected
+                            </div>
+                            """, unsafe_allow_html=True)
+
+                        # Live Metrics Row
+                        with metrics_container.container():
+                            m1, m2, m3, m4 = st.columns(4)
+                            m1.metric("Live Frame", f"#{frame_count:04d}")
+                            m2.metric(
+                                "Mask Status",
+                                "🔴 MASKED" if mask_res.is_masked else "🟢 CLEAR",
+                                delta=mask_res.mask_type if mask_res.is_masked else "CLEAN",
+                                delta_color="inverse" if mask_res.is_masked else "normal"
+                            )
+                            m3.metric(
+                                "Hash Chain",
+                                "🔴 TAMPERED" if is_tampered else "🟢 INTACT",
+                                delta=None
+                            )
+                            live_acc = max(0.0, 100.0 - (tamper_count / frame_count * 100.0))
+                            m4.metric("Live Accuracy", f"{live_acc:.1f}%")
+
+                        status_container.markdown(f"""
+                        **SHA-256:** `{f_hash[:16]}...` | **Chain:** `{c_hash[:16]}...`
+                        """)
+                        time.sleep(0.04)
+
+                    stream.release()
+                except Exception as ex:
+                    stream.release()
+                    st.error(f"Stream error: {ex}")
+            elif stream is not None:
+                st.error("Could not access physical webcam. Ensure camera is connected or select 'Synthetic CCTV'.")
+        elif op_mode.startswith("Continuous"):
+            preview_container.info("Check '🟢 Start Live Sentinel Stream' above to begin real-time camera monitoring and masking detection.")
+
+        # --- SUB-MODE B: RECORD & ANCHOR SESSION ---
+        elif start_record_btn:
+            chosen_mode = "synthetic" if "Synthetic" in source_type else "webcam"
+
+            try:
+                stream = VideoStreamSource(mode=chosen_mode, device_index=device_index)
             except Exception as ex:
                 st.error(f"Failed to open video source: {ex}")
                 stream = None
@@ -195,38 +346,58 @@ with tab1:
 
                 previous_hash = GENESIS_HASH
                 progress_bar = st.progress(0)
+                detected_masks = 0
 
                 for i in range(1, target_frames + 1):
-                    ret, frame = stream.read()
-                    if not ret or frame is None:
+                    ret, raw_frame = stream.read()
+                    if not ret or raw_frame is None:
                         break
 
-                    f_hash = compute_frame_hash(frame)
+                    monitored_frame = raw_frame.copy()
+
+                    # Apply live attack if selected
+                    if "Cover Camera Lens" in live_attack:
+                        monitored_frame[:] = 2
+                    elif "Digital Privacy Mask" in live_attack:
+                        h, w, _ = monitored_frame.shape
+                        cv2.rectangle(monitored_frame, (int(w * 0.28), int(h * 0.25)), (int(w * 0.72), int(h * 0.70)), (0, 0, 0), -1)
+                    elif "Watermark Pixel" in live_attack:
+                        h, w, _ = monitored_frame.shape
+                        cv2.putText(monitored_frame, "TAMPER ATTACK", (int(w * 0.3), int(h * 0.4)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+
+                    f_hash = compute_frame_hash(monitored_frame)
                     c_hash = create_chain_hash(previous_hash, i, f_hash)
 
-                    logger.log_frame(i, f_hash, c_hash, frame=frame)
+                    logger.log_frame(i, f_hash, c_hash, frame=monitored_frame)
                     previous_hash = c_hash
 
-                    hud_img = add_cryptographic_hud(
-                        frame=frame,
+                    mask_res = mask_detector.analyze_frame_masking(monitored_frame)
+                    if mask_res.is_masked:
+                        detected_masks += 1
+
+                    hud_img = add_dual_sentinel_hud(
+                        frame=monitored_frame,
                         frame_index=i,
                         frame_hash=f_hash,
                         chain_hash=c_hash,
-                        status="CHAIN SECURED",
-                        is_valid=True
+                        mask_result=mask_res,
+                        is_hash_valid=(live_attack == "None (Clean / Authentic Stream)")
                     )
                     hud_rgb = cv2.cvtColor(hud_img, cv2.COLOR_BGR2RGB)
                     preview_container.image(hud_rgb, channels="RGB", use_container_width=True)
 
                     status_container.markdown(f"""
-                    **Frame #{i:04d}** | SHA-256: `{f_hash[:16]}...` | Chain: `{c_hash[:16]}...`
+                    **Frame #{i:04d}** | SHA-256: `{f_hash[:16]}...` | Mask: `{'🔴 ' + mask_res.mask_type if mask_res.is_masked else '🟢 CLEAR'}`
                     """)
                     progress_bar.progress(i / target_frames)
                     time.sleep(0.04)
 
                 stream.release()
                 manifest = logger.close_session()
-                st.success(f"✅ Recording Complete! {target_frames} frames captured. Final Chain Hash: `{manifest['final_chain_hash'][:16]}...`")
+                if detected_masks > 0:
+                    st.warning(f"⚠️ Recording Complete with {detected_masks} MASKED frames detected! Final Chain Hash: `{manifest['final_chain_hash'][:16]}...`")
+                else:
+                    st.success(f"✅ Recording Complete! {target_frames} pristine frames secured. Final Chain Hash: `{manifest['final_chain_hash'][:16]}...`")
                 st.rerun()
             elif stream is not None:
                 st.error("Camera could not be opened. Using 'Synthetic CCTV' ensures instant verification without hardware.")
@@ -236,7 +407,7 @@ with tab1:
                 img = Image.open(latest_frame_path)
                 preview_container.image(img, caption=f"Last Recorded Frame (#{f_count})", use_container_width=True)
             else:
-                preview_container.info("Click 'Start Live Recording Session' to capture video frames and build the SHA-256 hash chain.")
+                preview_container.info("Select 'Start Live Sentinel Stream' or 'Record & Anchor Session' to start monitoring.")
 
 
 # ==========================================

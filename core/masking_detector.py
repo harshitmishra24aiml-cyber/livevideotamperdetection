@@ -55,18 +55,22 @@ class MaskingDetector:
         mean_val = float(np.mean(gray))
         std_val = float(np.std(gray))
 
-        # Blackout occlusion (e.g. tape or hand blocking light)
-        if mean_val < 15.0 and std_val < 12.0:
+        # Blackout occlusion (e.g. tape or hand blocking light completely)
+        if mean_val < 28.0 and std_val < 16.0:
             return True, 0.98, "Lens Blackout / Covered Camera (Near-zero dynamic range)"
 
         # Whiteout / Blinding flash occlusion
-        if mean_val > 240.0 and std_val < 15.0:
+        if mean_val > 235.0 and std_val < 18.0:
             return True, 0.95, "Lens Whiteout / Camera Blinding (Overexposure occlusion)"
 
-        # Severe Defocus / Uniform Obstruction (Laplacian variance)
+        # Severe Defocus / Extreme Obstruction / Tape over lens (Laplacian variance)
         lap_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
-        if lap_var < self.lens_occlusion_blur_thresh and std_val < 15.0:
-            return True, 0.90, f"Lens Occlusion / Extreme Obstruction (Laplacian variance: {lap_var:.2f})"
+        if lap_var < self.lens_occlusion_blur_thresh and std_val < 18.0:
+            return True, 0.92, f"Lens Occlusion / Extreme Obstruction (Laplacian variance: {lap_var:.2f})"
+
+        # Low variance flat surface covering camera (e.g., paper/finger)
+        if std_val < 8.0 and (mean_val < 60.0 or mean_val > 180.0):
+            return True, 0.90, "Lens Occlusion (Uniform flat surface covering lens)"
 
         return False, 0.0, "Lens clear"
 

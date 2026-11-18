@@ -15,10 +15,12 @@
 
 | Resource | Live Link | Description |
 | :--- | :--- | :--- |
-| **🚀 Web Dashboard** | [**Live Streamlit App**](https://livevideotamperdetection.streamlit.app) | Live capture studio, chain visualizer, tamper attack lab, and visual diff inspector. |
+| **🚀 Web Dashboard** | [**Live Streamlit App**](https://livevideotamperdetection.streamlit.app) | Live camera sentinel, video upload & accuracy inspector, chain visualizer, and tamper lab. |
 | **📊 Presentation Deck** | [**Interactive Slideshow (GitHub Pages)**](https://harshitmishra24aiml-cyber.github.io/livevideotamperdetection/presentation_slides.html) | Projector-ready 9-slide presentation with keyboard navigation. |
 | **📄 Forensic Audit Certificate** | [**Digital Evidence Certificate**](https://harshitmishra24aiml-cyber.github.io/livevideotamperdetection/forensic_audit_certificate.html) | Print-ready forensic certificate with embedded pixel difference heatmaps and RSA signatures. |
 | **🌐 GitHub Pages Portal** | [**Live Web Portal**](https://harshitmishra24aiml-cyber.github.io/livevideotamperdetection/) | Central hub connecting all web deliverables. |
+| **📦 GitHub Repository (Primary)** | [**harshitmishra24aiml-cyber/maskinghashingdetection**](https://github.com/harshitmishra24aiml-cyber/maskinghashingdetection) | Full source repository for dual masking and hashing detection. |
+| **📦 GitHub Repository (Mirror)** | [**harshitmishra24aiml-cyber/livevideotamperdetection**](https://github.com/harshitmishra24aiml-cyber/livevideotamperdetection) | Synchronized mirror repository. |
 
 ---
 

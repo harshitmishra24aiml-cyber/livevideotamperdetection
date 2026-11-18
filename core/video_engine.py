@@ -181,3 +181,97 @@ def add_cryptographic_hud(
                 cv2.FONT_HERSHEY_SIMPLEX, 0.42, (150, 150, 150), 1)
 
     return overlay
+
+
+def add_dual_sentinel_hud(
+    frame: np.ndarray,
+    frame_index: int,
+    frame_hash: str,
+    chain_hash: str,
+    mask_result=None,
+    is_hash_valid: bool = True,
+    status_override: Optional[str] = None
+) -> np.ndarray:
+    """
+    Renders dual cryptographic and masking detection HUD on a live frame.
+    Draws alarm banners, bounding boxes for detected masks, and chain metrics.
+    """
+    overlay = frame.copy()
+    h, w, _ = overlay.shape
+
+    is_masked = mask_result.is_masked if mask_result is not None else False
+    mask_type = mask_result.mask_type if mask_result is not None else "NONE"
+
+    # Draw bounding boxes if digital box mask detected
+    if is_masked and getattr(mask_result, 'bounding_boxes', None):
+        for (bx, by, bw, bh) in mask_result.bounding_boxes:
+            cv2.rectangle(overlay, (bx, by), (bx + bw, by + bh), (0, 0, 255), 2)
+            cv2.putText(
+                overlay,
+                f"MASKED ({bw}x{bh})",
+                (bx + 4, max(by - 6, 20)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 0, 255),
+                2
+            )
+
+    # Semi-transparent dark banner at bottom
+    banner_height = 80
+    sub_img = overlay[h - banner_height:h, 0:w]
+    dark_rect = np.zeros(sub_img.shape, dtype=np.uint8)
+    res = cv2.addWeighted(sub_img, 0.25, dark_rect, 0.75, 1.0)
+    overlay[h - banner_height:h, 0:w] = res
+
+    # Status color & label
+    if not is_hash_valid:
+        status_color = (0, 0, 255)  # Red
+        status_text = status_override or "HASH MISMATCH"
+    elif is_masked:
+        status_color = (0, 69, 255)  # Red-Orange
+        if mask_type == "LENS_OCCLUSION":
+            status_text = "LENS COVERED"
+        elif mask_type == "DIGITAL_BOX_MASK":
+            status_text = "BOX MASK DETECTED"
+        else:
+            status_text = "MASK DETECTED"
+    else:
+        status_color = (0, 255, 0)  # Green
+        status_text = status_override or "INTEGRITY SECURED"
+
+    # Top right security badge
+    badge_w = 230
+    cv2.rectangle(overlay, (w - badge_w - 10, 10), (w - 10, 42), (20, 20, 20), -1)
+    cv2.rectangle(overlay, (w - badge_w - 10, 10), (w - 10, 42), status_color, 2)
+    cv2.circle(overlay, (w - badge_w + 6, 26), 6, status_color, -1)
+    cv2.putText(overlay, status_text, (w - badge_w + 20, 31),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.46, (255, 255, 255), 1)
+
+    # If lens occlusion, draw central alert banner
+    if is_masked and mask_type == "LENS_OCCLUSION":
+        banner_w = int(w * 0.75)
+        bx1 = int((w - banner_w) / 2)
+        cv2.rectangle(overlay, (bx1, 55), (bx1 + banner_w, 95), (0, 0, 180), -1)
+        cv2.putText(overlay, "! CAMERA LENS OCCLUSION / COVERED !", (bx1 + 15, 83),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.60, (255, 255, 255), 2)
+
+    # Top left Frame Counter
+    cv2.rectangle(overlay, (10, 10), (190, 42), (20, 20, 20), -1)
+    cv2.rectangle(overlay, (10, 10), (190, 42), (80, 80, 80), 1)
+    cv2.putText(overlay, f"FRAME #{frame_index:06d}", (22, 32),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.58, (0, 255, 255), 2)
+
+    # Bottom Banner Details: Frame Hash & Hash Chain
+    short_frame = f"{frame_hash[:12]}...{frame_hash[-8:]}" if len(frame_hash) >= 20 else frame_hash
+    short_chain = f"{chain_hash[:12]}...{chain_hash[-8:]}" if len(chain_hash) >= 20 else chain_hash
+
+    mask_info = f"MASK: {mask_type}" if is_masked else "MASK: NONE (CLEAR)"
+
+    cv2.putText(overlay, f"SHA-256: {short_frame} | {mask_info}", (15, h - 50),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.48, (220, 220, 220), 1)
+    cv2.putText(overlay, f"CHAIN (Ci): {short_chain}", (15, h - 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 255, 180), 1)
+    cv2.putText(overlay, "Ci = SHA256(Ci-1 || i || Hi)", (w - 240, h - 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.40, (160, 160, 160), 1)
+
+    return overlay

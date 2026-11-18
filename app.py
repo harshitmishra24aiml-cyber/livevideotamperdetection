@@ -10,6 +10,9 @@ import json
 import time
 import shutil
 import tempfile
+import uuid
+import io
+import zipfile
 import pandas as pd
 import numpy as np
 from PIL import Image
@@ -162,8 +165,6 @@ with tab1:
         )
 
         device_index = 0
-        video_path = None
-
         if source_type == "Physical Webcam":
             device_index = st.number_input("Webcam Device Index", min_value=0, max_value=5, value=0)
 
@@ -243,135 +244,168 @@ with tab1:
 # ==========================================
 with tab2:
     st.markdown("### 📤 Upload Video & Inspect Accuracy")
-    st.write("Upload any surveillance or recorded video file (`.mp4`, `.avi`, `.mov`) to evaluate its **Integrity Accuracy (0% to 100%)** and detect both **Cryptographic Hash Tampering** and **Video Masking Attacks** (lens occlusion, redaction boxes, inpainting).")
+    st.write(
+        "Upload any surveillance or recorded video file (`.mp4`, `.avi`, `.mov`, `.mkv`) "
+        "to evaluate its **Integrity Accuracy (0% to 100%)**, detect **Cryptographic Hash Tampering**, "
+        "and identify **Video Masking Attacks** (lens occlusion, digital redactions, static patches)."
+    )
 
     up_col1, up_col2 = st.columns([1, 1])
 
     with up_col1:
-        st.markdown("#### 1. Upload Video File")
+        st.markdown("#### 1. Choose Video File")
         uploaded_video = st.file_uploader(
             "Upload surveillance video (.mp4, .avi, .mov, .mkv)",
-            type=["mp4", "avi", "mov", "mkv"]
+            type=["mp4", "avi", "mov", "mkv", "mpeg", "mpg"],
+            key="upload_inspector_video"
         )
 
     with up_col2:
         st.markdown("#### 2. Optional: Upload Hash Chain Log")
         uploaded_log = st.file_uploader(
             "Upload hash_log.jsonl (Optional: Enables bit-exact cryptographic audit)",
-            type=["jsonl", "json"]
+            type=["jsonl", "json"],
+            key="upload_inspector_log"
         )
 
     if uploaded_video is not None:
-        # Save to temporary path
-        tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-        tfile.write(uploaded_video.read())
-        temp_video_path = tfile.name
-        tfile.close()
+        st.video(uploaded_video)
+        st.caption(f"Filename: `{uploaded_video.name}` • Size: `{uploaded_video.size / (1024 * 1024):.2f} MB`")
+
+        # Two operational buttons
+        btn_col1, btn_col2 = st.columns(2)
+        with btn_col1:
+            run_forensic_inspect = st.button(
+                "🔬 Run Forensic Accuracy & Masking Audit",
+                type="primary",
+                use_container_width=True,
+                key="btn_run_forensic_inspect"
+            )
+        with btn_col2:
+            process_as_session = st.button(
+                "🔐 Hash & Secure Video into New Evidence Session",
+                use_container_width=True,
+                key="btn_process_as_session"
+            )
+
+        suffix = os.path.splitext(uploaded_video.name)[1].lower() or ".mp4"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tfile:
+            tfile.write(uploaded_video.getbuffer())
+            temp_video_path = tfile.name
 
         temp_log_path = None
         if uploaded_log is not None:
-            tlogfile = tempfile.NamedTemporaryFile(delete=False, suffix=".jsonl")
-            tlogfile.write(uploaded_log.read())
-            temp_log_path = tlogfile.name
-            tlogfile.close()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".jsonl") as tlogfile:
+                tlogfile.write(uploaded_log.getbuffer())
+                temp_log_path = tlogfile.name
 
-        st.markdown("---")
-        with st.spinner("🔬 Running Forensic Video Integrity & Masking Analysis..."):
-            verifier = VideoVerifier()
-            upload_res: VerificationResult = verifier.verify_video_file(
-                video_path=temp_video_path,
-                optional_log_path=temp_log_path,
-                max_frames=150
-            )
+        # --- OPTION A: RUN ACCURACY & MASKING AUDIT ---
+        if run_forensic_inspect or "last_upload_inspection_res" in st.session_state:
+            if run_forensic_inspect:
+                with st.spinner("🔬 Running Deep Forensic Integrity & Masking Analysis..."):
+                    verifier = VideoVerifier()
+                    upload_res = verifier.verify_video_file(
+                        video_path=temp_video_path,
+                        optional_log_path=temp_log_path,
+                        max_frames=150
+                    )
+                    st.session_state["last_upload_inspection_res"] = upload_res.to_dict()
+                    st.session_state["last_inspected_video_path"] = temp_video_path
+            else:
+                upload_res_dict = st.session_state["last_upload_inspection_res"]
+                upload_res = VerificationResult(
+                    is_valid=upload_res_dict["is_valid"],
+                    total_checked=upload_res_dict["total_checked"],
+                    authentic_count=upload_res_dict["authentic_count"],
+                    tampered_count=upload_res_dict["tampered_count"],
+                    missing_count=upload_res_dict["missing_count"],
+                    chain_broken_count=upload_res_dict["chain_broken_count"],
+                    masked_count=upload_res_dict["masked_count"],
+                    accuracy_percent=upload_res_dict["accuracy_percent"],
+                    first_violation_index=upload_res_dict["first_violation_index"],
+                    manifest_verified=upload_res_dict["manifest_verified"],
+                    summary_message=upload_res_dict["summary_message"],
+                    video_source_mode=upload_res_dict["video_source_mode"],
+                    frame_results=[FrameStatus(**f) for f in upload_res_dict["frames"]]
+                )
 
-        # Accuracy & Authenticity Meter Banner
-        acc = upload_res.accuracy_percent
-        if acc >= 95.0 and upload_res.is_valid:
-            st.markdown(f"""
-            <div class="verified-banner" style="font-size: 1.3rem;">
-                🟢 INTEGRITY VERIFIED: {acc}% ACCURACY<br>
-                <span style="font-size: 1rem; font-weight: normal;">No masking or hash tampering detected. Video is authentic across all {upload_res.total_checked} inspected frames.</span>
-            </div>
-            """, unsafe_allow_html=True)
-        elif acc >= 70.0:
-            st.markdown(f"""
-            <div style="background-color: #78350F; border: 2px solid #F59E0B; color: #FEF3C7; padding: 18px; border-radius: 8px; font-weight: 600; font-size: 1.25rem; text-align: center; margin-bottom: 1rem;">
-                ⚠️ WARNING: SUSPICIOUS VIDEO (ACCURACY: {acc}%)<br>
-                <span style="font-size: 0.95rem; font-weight: normal;">
-                    Integrity anomalies detected! Found {upload_res.tampered_count} violations ({upload_res.masked_count} masked frames). First violation at <b>Frame #{upload_res.first_violation_index}</b>.
-                </span>
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown(f"""
-            <div class="tampered-banner" style="font-size: 1.3rem;">
-                🔴 SEVERE ALERT: VIDEO INTEGRITY COMPROMISED (ACCURACY: {acc}%)<br>
-                <span style="font-size: 1rem; font-weight: normal;">
-                    Video tampering & masking confirmed! Detected {upload_res.tampered_count} violations. First compromised at <b>Frame #{upload_res.first_violation_index}</b>.
-                </span>
-            </div>
-            """, unsafe_allow_html=True)
-
-        # KPI Metric Cards
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Overall Accuracy", f"{acc}%", delta="HIGH" if acc >= 95 else "-COMPROMISED")
-        k2.metric("Inspected Frames", upload_res.total_checked)
-        k3.metric("Authentic Frames", upload_res.authentic_count)
-        k4.metric("Masked / Tampered", upload_res.tampered_count, delta=f"{upload_res.masked_count} masked" if upload_res.masked_count > 0 else None, delta_color="inverse")
-
-        # Interactive Frame-by-Frame Forensic Inspector
-        st.markdown("---")
-        st.markdown("#### 🔬 Interactive Frame Masking & Tamper Inspector")
-
-        if upload_res.total_checked > 0:
-            inspect_f = st.slider(
-                "Select Frame to Inspect",
-                min_value=1,
-                max_value=upload_res.total_checked,
-                value=min(upload_res.first_violation_index or 1, upload_res.total_checked)
-            )
-
-            # Extract selected frame
-            cap = cv2.VideoCapture(temp_video_path)
-            cap.set(cv2.CAP_PROP_POS_FRAMES, inspect_f - 1)
-            ret_f, current_frame = cap.read()
-            cap.release()
-
-            if ret_f and current_frame is not None:
-                cur_status = upload_res.frame_results[inspect_f - 1]
-                mask_det = MaskingDetector()
-                mask_res = mask_det.analyze_frame_masking(current_frame)
-                ai_det = AITamperDetector()
-                ai_res = ai_det.analyze_frame_anomaly(current_frame)
-
-                v_col1, v_col2, v_col3 = st.columns(3)
-
-                with v_col1:
-                    st.image(cv2.cvtColor(current_frame, cv2.COLOR_BGR2RGB),
-                             caption=f"Frame #{inspect_f:04d} (Uploaded Raw)", use_container_width=True)
-
-                with v_col2:
-                    st.image(cv2.cvtColor(mask_res.annotated_frame, cv2.COLOR_BGR2RGB),
-                             caption=f"Masking Localization ({mask_res.mask_type})", use_container_width=True)
-
-                with v_col3:
-                    st.image(cv2.cvtColor(ai_res["ela_map"], cv2.COLOR_BGR2RGB),
-                             caption="Error Level Analysis (ELA Heatmap)", use_container_width=True)
-
-                # Diagnostic details
+            st.markdown("---")
+            acc = upload_res.accuracy_percent
+            if acc >= 95.0 and upload_res.is_valid:
                 st.markdown(f"""
-                **Frame Status:** `{cur_status.status}` | **Authentic:** `{'Yes' if cur_status.is_authentic else 'No'}`  
-                **Frame SHA-256 Digest:** `{cur_status.recomputed_frame_hash}`  
-                **Masking Diagnosis:** `{cur_status.mask_details or 'None'}`  
-                **Detected Bounding Boxes:** `{cur_status.mask_coords if cur_status.mask_coords else 'None'}`  
-                **AI Anomaly Score:** `{ai_res['anomaly_score'] * 100:.1f}%`
-                """)
+                <div class="verified-banner" style="font-size: 1.3rem;">
+                    🟢 INTEGRITY VERIFIED: {acc}% ACCURACY<br>
+                    <span style="font-size: 1rem; font-weight: normal;">No masking or hash tampering detected. Video is authentic across all {upload_res.total_checked} inspected frames.</span>
+                </div>
+                """, unsafe_allow_html=True)
+            elif acc >= 70.0:
+                st.markdown(f"""
+                <div style="background-color: #78350F; border: 2px solid #F59E0B; color: #FEF3C7; padding: 18px; border-radius: 8px; font-weight: 600; font-size: 1.25rem; text-align: center; margin-bottom: 1rem;">
+                    ⚠️ WARNING: SUSPICIOUS VIDEO (ACCURACY: {acc}%)<br>
+                    <span style="font-size: 0.95rem; font-weight: normal;">
+                        Integrity anomalies detected! Found {upload_res.tampered_count} violations ({upload_res.masked_count} masked frames). First violation at <b>Frame #{upload_res.first_violation_index}</b>.
+                    </span>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div class="tampered-banner" style="font-size: 1.3rem;">
+                    🔴 SEVERE ALERT: VIDEO INTEGRITY COMPROMISED (ACCURACY: {acc}%)<br>
+                    <span style="font-size: 1rem; font-weight: normal;">
+                        Video tampering & masking confirmed! Detected {upload_res.tampered_count} violations. First compromised at <b>Frame #{upload_res.first_violation_index}</b>.
+                    </span>
+                </div>
+                """, unsafe_allow_html=True)
 
-        # Table of all frames
-        with st.expander("📋 View Complete Frame-by-Frame Audit Table", expanded=False):
-            tab_data = []
-            for fr in upload_res.frame_results:
-                tab_data.append({
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Overall Accuracy", f"{acc}%", delta="HIGH" if acc >= 95 else "-COMPROMISED")
+            k2.metric("Inspected Frames", upload_res.total_checked)
+            k3.metric("Authentic Frames", upload_res.authentic_count)
+            k4.metric("Masked / Tampered", upload_res.tampered_count, delta=f"{upload_res.masked_count} masked" if upload_res.masked_count > 0 else None, delta_color="inverse")
+
+            # Interactive Frame Inspector
+            if upload_res.total_checked > 0:
+                st.markdown("#### 🔬 Frame-by-Frame Masking & Tamper Inspector")
+                inspect_f = st.slider(
+                    "Select Frame to Inspect",
+                    min_value=1,
+                    max_value=upload_res.total_checked,
+                    value=min(upload_res.first_violation_index or 1, upload_res.total_checked)
+                )
+
+                cap = cv2.VideoCapture(temp_video_path)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, inspect_f - 1)
+                ret_f, current_frame = cap.read()
+                cap.release()
+
+                if ret_f and current_frame is not None:
+                    cur_status = upload_res.frame_results[inspect_f - 1]
+                    mask_det = MaskingDetector()
+                    mask_res = mask_det.analyze_frame_masking(current_frame)
+                    ai_det = AITamperDetector()
+                    ai_res = ai_det.analyze_frame_anomaly(current_frame)
+
+                    v_col1, v_col2, v_col3 = st.columns(3)
+                    with v_col1:
+                        st.image(cv2.cvtColor(current_frame, cv2.COLOR_BGR2RGB),
+                                 caption=f"Frame #{inspect_f:04d} (Uploaded Raw)", use_container_width=True)
+                    with v_col2:
+                        st.image(cv2.cvtColor(mask_res.annotated_frame, cv2.COLOR_BGR2RGB),
+                                 caption=f"Masking Localization ({mask_res.mask_type})", use_container_width=True)
+                    with v_col3:
+                        st.image(cv2.cvtColor(ai_res["ela_map"], cv2.COLOR_BGR2RGB),
+                                 caption="Error Level Analysis (ELA Heatmap)", use_container_width=True)
+
+                    st.markdown(f"""
+                    **Frame Status:** `{cur_status.status}` | **Authentic:** `{'Yes' if cur_status.is_authentic else 'No'}`  
+                    **Frame SHA-256 Digest:** `{cur_status.recomputed_frame_hash}`  
+                    **Masking Diagnosis:** `{cur_status.mask_details or 'None'}`  
+                    **Detected Bounding Boxes:** `{cur_status.mask_coords if cur_status.mask_coords else 'None'}`  
+                    **AI Anomaly Score:** `{ai_res['anomaly_score'] * 100:.1f}%`
+                    """)
+
+            with st.expander("📋 View Complete Frame-by-Frame Audit Table", expanded=False):
+                tab_data = [{
                     "Frame": f"#{fr.index:04d}",
                     "Status": fr.status,
                     "Authentic": "✅ Authentic" if fr.is_authentic else "❌ Tampered/Masked",
@@ -379,16 +413,62 @@ with tab2:
                     "Bounding Box": str(fr.mask_coords) if fr.mask_coords else "None",
                     "SHA-256": fr.recomputed_frame_hash[:16] + "..." if fr.recomputed_frame_hash else "",
                     "Details": fr.details
-                })
-            st.dataframe(pd.DataFrame(tab_data), use_container_width=True, hide_index=True)
+                } for fr in upload_res.frame_results]
+                st.dataframe(pd.DataFrame(tab_data), use_container_width=True, hide_index=True)
 
-        # Cleanup temp file
-        try:
-            os.remove(temp_video_path)
-            if temp_log_path:
-                os.remove(temp_log_path)
-        except Exception:
-            pass
+        # --- OPTION B: PROCESS & SECURE INTO SESSION WITH ZIP EXPORT ---
+        if process_as_session:
+            session_id = uuid.uuid4().hex[:12]
+            upload_root = os.path.join(DEFAULT_BASE_DIR, "uploads", session_id)
+            os.makedirs(upload_root, exist_ok=True)
+
+            try:
+                cap = cv2.VideoCapture(temp_video_path)
+                source_fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+                source_frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                logger = AuditLogger(base_dir=upload_root)
+                logger.open_session(reset=True)
+
+                processed = 0
+                progress = st.progress(0.0)
+                status = st.empty()
+
+                while True:
+                    ok, frame = cap.read()
+                    if not ok:
+                        break
+                    processed += 1
+                    f_hash = compute_frame_hash(frame)
+                    c_hash = create_chain_hash(logger.previous_hash, processed, f_hash)
+                    logger.log_frame(processed, f_hash, c_hash, frame=frame)
+                    if source_frame_count > 0:
+                        progress.progress(min(processed / source_frame_count, 1.0))
+                    status.markdown(f"**Secured:** Frame #{processed:04d} | SHA-256: `{f_hash[:16]}…`")
+
+                cap.release()
+                manifest = logger.close_session()
+
+                st.session_state["last_upload_evidence_dir"] = upload_root
+                st.success(f"✅ Video Secured! {processed} frames hashed and chained into session `{session_id}`.")
+
+                # Zip download
+                zip_buffer = io.BytesIO()
+                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+                    for root, _, files in os.walk(upload_root):
+                        for fname in files:
+                            fpath = os.path.join(root, fname)
+                            rel_p = os.path.relpath(fpath, upload_root)
+                            archive.write(fpath, arcname=os.path.join("video_evidence", rel_p))
+
+                st.download_button(
+                    "📦 Download Complete Evidence Package (ZIP)",
+                    data=zip_buffer.getvalue(),
+                    file_name=f"video_integrity_evidence_{session_id}.zip",
+                    mime="application/zip",
+                    use_container_width=True
+                )
+            except Exception as ex:
+                st.error(f"Processing failed: {ex}")
 
 
 # ==========================================
@@ -524,7 +604,6 @@ with tab5:
         verifier = VideoVerifier()
         result = verifier.verify()
 
-        # Visual Verdict Banner
         if result.is_valid:
             st.markdown(f"""
             <div class="verified-banner">
@@ -542,7 +621,6 @@ with tab5:
             </div>
             """, unsafe_allow_html=True)
 
-        # KPI Metrics
         m1, m2, m3, m4, m5, m6 = st.columns(6)
         m1.metric("Accuracy", f"{result.accuracy_percent}%", delta="HIGH" if result.is_valid else "-TAMPERED")
         m2.metric("Total Frames", result.total_checked)
@@ -551,7 +629,6 @@ with tab5:
         m5.metric("Masked Frames", result.masked_count, delta=f"-{result.masked_count}" if result.masked_count > 0 else None, delta_color="inverse")
         m6.metric("Broken Chain", result.chain_broken_count, delta=f"-{result.chain_broken_count}" if result.chain_broken_count > 0 else None, delta_color="inverse")
 
-        # Frame Audit Table
         st.markdown("#### Frame-by-Frame Cryptographic & Masking Audit")
         filter_choice = st.radio("Filter Frames", ["Show All", "Violations Only", "Masked Only", "Authentic Only"], horizontal=True)
 
@@ -581,7 +658,6 @@ with tab5:
         else:
             st.info("No frames match the selected filter.")
 
-        # Tamper Difference Heatmap Inspector
         st.markdown("---")
         st.markdown("#### 🔬 Visual Tamper Difference Heatmap Inspector")
         st.write("Compare the current evidence frame against the original baseline snapshot to visualize the exact coordinates of modified pixels.")

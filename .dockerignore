@@ -1,0 +1,12 @@
+.git
+.github
+.venv
+venv
+__pycache__
+*.pyc
+.env
+api/.env
+api/data
+evidence
+mobile_app/.dart_tool
+mobile_app/build

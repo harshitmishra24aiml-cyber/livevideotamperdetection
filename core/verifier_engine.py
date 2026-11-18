@@ -1,6 +1,7 @@
 """
 Forensic Verification Engine for Live Video Tamper Detection.
-Performs cryptographic verification of frames, sequence continuity, and hash chain integrity.
+Performs cryptographic verification of frames, sequence continuity, hash chain integrity,
+and AI-assisted video masking and lens occlusion detection.
 """
 
 import os
@@ -15,13 +16,14 @@ from .hash_chain import (
     create_chain_hash,
     verify_session_signature,
 )
+from .masking_detector import MaskingDetector, MaskingResult
 
 
 @dataclass
 class FrameStatus:
     index: int
     filename: str
-    status: str  # "AUTHENTIC", "TAMPERED", "MISSING", "CHAIN_BROKEN", "DISORDERED"
+    status: str  # "AUTHENTIC", "TAMPERED", "TAMPERED_BY_MASKING", "MISSING", "CHAIN_BROKEN", "DISORDERED"
     is_authentic: bool
     recorded_frame_hash: str
     recomputed_frame_hash: Optional[str]
@@ -31,6 +33,10 @@ class FrameStatus:
     recomputed_chain_hash: Optional[str]
     details: str
     timestamp: float = 0.0
+    is_masked: bool = False
+    mask_type: str = "NONE"
+    mask_coords: List[Tuple[int, int, int, int]] = field(default_factory=list)
+    mask_details: str = ""
 
 
 @dataclass
@@ -41,10 +47,13 @@ class VerificationResult:
     tampered_count: int
     missing_count: int
     chain_broken_count: int
+    masked_count: int
+    accuracy_percent: float
     first_violation_index: Optional[int]
     manifest_verified: Optional[bool]
     frame_results: List[FrameStatus] = field(default_factory=list)
     summary_message: str = ""
+    video_source_mode: str = "SESSION_FRAMES"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -54,16 +63,20 @@ class VerificationResult:
             "tampered_count": self.tampered_count,
             "missing_count": self.missing_count,
             "chain_broken_count": self.chain_broken_count,
+            "masked_count": self.masked_count,
+            "accuracy_percent": self.accuracy_percent,
             "first_violation_index": self.first_violation_index,
             "manifest_verified": self.manifest_verified,
             "summary_message": self.summary_message,
+            "video_source_mode": self.video_source_mode,
             "frames": [asdict(f) for f in self.frame_results],
         }
 
 
 class VideoVerifier:
     """
-    Cryptographic auditor verifying frames and the tamper-evident hash chain.
+    Cryptographic and Forensic Auditor verifying frames, hash chains,
+    and video masking attacks.
     """
 
     def __init__(
@@ -77,10 +90,12 @@ class VideoVerifier:
         self.frame_dir = frame_dir or os.path.join(base_dir, "frames")
         self.log_file = log_file or os.path.join(base_dir, "hash_log.jsonl")
         self.secret_key = secret_key
+        self.masking_detector = MaskingDetector()
 
     def verify(self) -> VerificationResult:
         """
-        Executes a rigorous cryptographic audit of all recorded frames and the hash chain.
+        Executes a rigorous cryptographic audit of all recorded frames and the hash chain,
+        enhanced with multi-angle masking detection.
         """
         if not os.path.exists(self.log_file):
             return VerificationResult(
@@ -90,6 +105,8 @@ class VideoVerifier:
                 tampered_count=0,
                 missing_count=0,
                 chain_broken_count=0,
+                masked_count=0,
+                accuracy_percent=0.0,
                 first_violation_index=None,
                 manifest_verified=None,
                 summary_message=f"Log file not found: {self.log_file}",
@@ -103,7 +120,9 @@ class VideoVerifier:
         tampered_count = 0
         missing_count = 0
         chain_broken_count = 0
+        masked_count = 0
         first_violation_index = None
+        prev_frame_cache = None
 
         with open(self.log_file, "r", encoding="utf-8") as f:
             for line_no, line in enumerate(f, start=1):
@@ -145,9 +164,6 @@ class VideoVerifier:
 
                 # Check 1: Sequence index
                 if idx != expected_index:
-                    details = f"Sequence gap detected: expected #{expected_index}, found #{idx}"
-                    status = "DISORDERED"
-                    is_auth = False
                     tampered_count += 1
                     if first_violation_index is None:
                         first_violation_index = idx
@@ -173,7 +189,6 @@ class VideoVerifier:
                             timestamp=timestamp,
                         )
                     )
-                    # For chain continuity, update previous_hash from record
                     previous_hash = recorded_chain_hash
                     expected_index = idx + 1
                     continue
@@ -217,16 +232,33 @@ class VideoVerifier:
                     recomputed_chain_hash == recorded_chain_hash and prev_hash_match
                 )
 
+                # Check 6: Video Masking & Occlusion Detection
+                mask_res = self.masking_detector.analyze_frame_masking(frame, prev_frame_cache)
+                prev_frame_cache = frame.copy()
+
+                if mask_res.is_masked:
+                    masked_count += 1
+
                 if frame_hash_match and chain_hash_match:
-                    status = "AUTHENTIC"
-                    is_auth = True
-                    authentic_count += 1
-                    details = "Bit-exact pixel hash and chain link verified"
+                    if mask_res.is_masked:
+                        status = f"AUTHENTIC_BUT_{mask_res.mask_type}"
+                        is_auth = False
+                        tampered_count += 1
+                        details = f"Hash matches captured log, but frame exhibits {mask_res.details}"
+                    else:
+                        status = "AUTHENTIC"
+                        is_auth = True
+                        authentic_count += 1
+                        details = "Bit-exact pixel hash and chain link verified. No masking."
                 elif not frame_hash_match and chain_hash_match:
-                    status = "TAMPERED"
                     is_auth = False
                     tampered_count += 1
-                    details = "Pixel data altered (frame hash mismatch)"
+                    if mask_res.is_masked:
+                        status = f"TAMPERED_BY_{mask_res.mask_type}"
+                        details = f"Frame tampered: {mask_res.details} (hash mismatch)"
+                    else:
+                        status = "TAMPERED"
+                        details = "Pixel data altered (frame hash mismatch)"
                     if first_violation_index is None:
                         first_violation_index = idx
                 elif frame_hash_match and not chain_hash_match:
@@ -237,10 +269,14 @@ class VideoVerifier:
                     if first_violation_index is None:
                         first_violation_index = idx
                 else:
-                    status = "TAMPERED"
                     is_auth = False
                     tampered_count += 1
-                    details = "Both frame pixel hash and chain hash corrupted"
+                    if mask_res.is_masked:
+                        status = f"TAMPERED_BY_{mask_res.mask_type}"
+                        details = f"Both frame hash and chain hash corrupted with {mask_res.details}"
+                    else:
+                        status = "TAMPERED"
+                        details = "Both frame pixel hash and chain hash corrupted"
                     if first_violation_index is None:
                         first_violation_index = idx
 
@@ -258,15 +294,17 @@ class VideoVerifier:
                         recomputed_chain_hash=recomputed_chain_hash,
                         details=details,
                         timestamp=timestamp,
+                        is_masked=mask_res.is_masked,
+                        mask_type=mask_res.mask_type,
+                        mask_coords=mask_res.bounding_boxes,
+                        mask_details=mask_res.details,
                     )
                 )
 
-                # For forensic progression, advance the chain using the recorded chain hash
-                # so subsequent frame checks can also be audited.
                 previous_hash = recorded_chain_hash
                 expected_index = idx + 1
 
-        # Check 6: Session manifest digital signature
+        # Check 7: Session manifest digital signature
         manifest_path = os.path.join(self.base_dir, "session_manifest.json")
         manifest_verified = None
         if os.path.exists(manifest_path):
@@ -284,14 +322,15 @@ class VideoVerifier:
 
         total_violations = tampered_count + missing_count + chain_broken_count
         is_valid = total_violations == 0 and total_checked > 0
+        accuracy = round((authentic_count / total_checked) * 100.0, 1) if total_checked > 0 else 0.0
 
         if is_valid:
-            summary = "RESULT: No tampering detected. All frames and chain links are 100% authentic."
+            summary = f"RESULT: No tampering detected. All frames and chain links are 100% authentic (Accuracy: {accuracy}%)."
         else:
             summary = (
-                f"RESULT: VIDEO INTEGRITY COMPROMISED! "
+                f"RESULT: VIDEO INTEGRITY COMPROMISED! Accuracy: {accuracy}%. "
                 f"Violations: {total_violations} (Tampered: {tampered_count}, "
-                f"Missing: {missing_count}, Broken Chain: {chain_broken_count}). "
+                f"Masked: {masked_count}, Missing: {missing_count}, Broken Chain: {chain_broken_count}). "
                 f"First compromised frame: #{first_violation_index}."
             )
 
@@ -302,10 +341,210 @@ class VideoVerifier:
             tampered_count=tampered_count,
             missing_count=missing_count,
             chain_broken_count=chain_broken_count,
+            masked_count=masked_count,
+            accuracy_percent=accuracy,
             first_violation_index=first_violation_index,
             manifest_verified=manifest_verified,
             frame_results=frame_results,
             summary_message=summary,
+            video_source_mode="SESSION_FRAMES",
+        )
+
+    def verify_video_file(
+        self,
+        video_path: str,
+        optional_log_path: Optional[str] = None,
+        max_frames: int = 120
+    ) -> VerificationResult:
+        """
+        Directly analyzes an uploaded video file (.mp4, .avi, .mov).
+        If optional_log_path is provided, verifies SHA-256 hash chain and masking.
+        If no log is provided, executes deep AI masking forensics (lens occlusion, digital redactions, static patches).
+        """
+        if not os.path.exists(video_path):
+            return VerificationResult(
+                is_valid=False,
+                total_checked=0,
+                authentic_count=0,
+                tampered_count=0,
+                missing_count=0,
+                chain_broken_count=0,
+                masked_count=0,
+                accuracy_percent=0.0,
+                first_violation_index=None,
+                manifest_verified=None,
+                summary_message=f"Video file not found: {video_path}",
+                video_source_mode="UPLOADED_FILE"
+            )
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return VerificationResult(
+                is_valid=False,
+                total_checked=0,
+                authentic_count=0,
+                tampered_count=0,
+                missing_count=0,
+                chain_broken_count=0,
+                masked_count=0,
+                accuracy_percent=0.0,
+                first_violation_index=None,
+                manifest_verified=None,
+                summary_message=f"Could not open video file {video_path}",
+                video_source_mode="UPLOADED_FILE"
+            )
+
+        # Parse log records if provided
+        log_records = []
+        if optional_log_path and os.path.exists(optional_log_path):
+            with open(optional_log_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip():
+                        log_records.append(json.loads(line.strip()))
+
+        has_log = len(log_records) > 0
+        frame_results: List[FrameStatus] = []
+        idx = 0
+        authentic_count = 0
+        tampered_count = 0
+        masked_count = 0
+        chain_broken_count = 0
+        first_violation_index = None
+        previous_hash = GENESIS_HASH
+        prev_frame = None
+
+        while True:
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                break
+            idx += 1
+            if max_frames > 0 and idx > max_frames:
+                break
+
+            frame_hash = compute_frame_hash(frame)
+            mask_res = self.masking_detector.analyze_frame_masking(frame, prev_frame)
+            prev_frame = frame.copy()
+
+            if mask_res.is_masked:
+                masked_count += 1
+
+            if has_log:
+                # Cryptographic + Masking Mode
+                if idx <= len(log_records):
+                    rec = log_records[idx - 1]
+                    rec_f_hash = rec.get("frame_hash", "")
+                    rec_prev_hash = rec.get("previous_hash", "")
+                    rec_c_hash = rec.get("chain_hash", "")
+
+                    f_match = frame_hash == rec_f_hash
+                    c_calc = create_chain_hash(previous_hash, idx, frame_hash)
+                    c_match = (c_calc == rec_c_hash) and (rec_prev_hash == previous_hash)
+
+                    if f_match and c_match and not mask_res.is_masked:
+                        status = "AUTHENTIC"
+                        is_auth = True
+                        authentic_count += 1
+                        details = "Hash chain and masking verified: 100% authentic"
+                    elif mask_res.is_masked:
+                        status = f"TAMPERED_BY_{mask_res.mask_type}"
+                        is_auth = False
+                        tampered_count += 1
+                        details = f"Masking Detected: {mask_res.details}"
+                        if first_violation_index is None:
+                            first_violation_index = idx
+                    elif not f_match:
+                        status = "TAMPERED"
+                        is_auth = False
+                        tampered_count += 1
+                        details = "Frame hash mismatch (pixel modification)"
+                        if first_violation_index is None:
+                            first_violation_index = idx
+                    else:
+                        status = "CHAIN_BROKEN"
+                        is_auth = False
+                        chain_broken_count += 1
+                        details = "Chain dependency link disrupted"
+                        if first_violation_index is None:
+                            first_violation_index = idx
+
+                    previous_hash = rec_c_hash
+                else:
+                    # Beyond log records (inserted/extra frames)
+                    status = "UNLOGGED_FRAME"
+                    is_auth = False
+                    tampered_count += 1
+                    details = "Frame present in video but omitted from audit log"
+                    rec_f_hash = ""
+                    rec_prev_hash = ""
+                    rec_c_hash = ""
+                    c_calc = None
+            else:
+                # Standalone AI Masking Forensics Mode (Raw Video Upload)
+                rec_f_hash = frame_hash
+                rec_prev_hash = previous_hash
+                c_calc = create_chain_hash(previous_hash, idx, frame_hash)
+                rec_c_hash = c_calc
+
+                if mask_res.is_masked:
+                    status = f"MASKED_{mask_res.mask_type}"
+                    is_auth = False
+                    tampered_count += 1
+                    details = mask_res.details
+                    if first_violation_index is None:
+                        first_violation_index = idx
+                else:
+                    status = "AUTHENTIC"
+                    is_auth = True
+                    authentic_count += 1
+                    details = "Clean video frame (no masking, uncompromised lens)"
+
+                previous_hash = c_calc
+
+            frame_results.append(
+                FrameStatus(
+                    index=idx,
+                    filename=f"frame_{idx:06d}.png",
+                    status=status,
+                    is_authentic=is_auth,
+                    recorded_frame_hash=rec_f_hash,
+                    recomputed_frame_hash=frame_hash,
+                    recorded_previous_hash=rec_prev_hash,
+                    expected_previous_hash=previous_hash,
+                    recorded_chain_hash=rec_c_hash,
+                    recomputed_chain_hash=c_calc,
+                    details=details,
+                    is_masked=mask_res.is_masked,
+                    mask_type=mask_res.mask_type,
+                    mask_coords=mask_res.bounding_boxes,
+                    mask_details=mask_res.details,
+                )
+            )
+
+        cap.release()
+        total_checked = idx
+        accuracy = round((authentic_count / total_checked) * 100.0, 1) if total_checked > 0 else 0.0
+        is_valid = (tampered_count + chain_broken_count == 0) and total_checked > 0
+
+        mode_desc = "Dual Cryptographic + Masking" if has_log else "AI Masking & Anomaly Forensics"
+        if is_valid:
+            summary = f"RESULT: Video Integrity Verified! [{mode_desc}] Accuracy: {accuracy}% across {total_checked} frames."
+        else:
+            summary = f"RESULT: Video Tampering Detected! [{mode_desc}] Accuracy: {accuracy}%. Violations: {tampered_count} (Masked: {masked_count}). First detected at Frame #{first_violation_index}."
+
+        return VerificationResult(
+            is_valid=is_valid,
+            total_checked=total_checked,
+            authentic_count=authentic_count,
+            tampered_count=tampered_count,
+            missing_count=0,
+            chain_broken_count=chain_broken_count,
+            masked_count=masked_count,
+            accuracy_percent=accuracy,
+            first_violation_index=first_violation_index,
+            manifest_verified=True if has_log and is_valid else None,
+            frame_results=frame_results,
+            summary_message=summary,
+            video_source_mode=f"UPLOADED_FILE ({mode_desc})"
         )
 
     def generate_tamper_heatmap(
@@ -334,7 +573,6 @@ class VideoVerifier:
         diff_gray = cv2.cvtColor(diff, cv2.COLOR_BGR2GRAY)
 
         # Highlight difference with colormap (HEATMAP)
-        # Scale differences to maximize visibility
         _, thresh = cv2.threshold(diff_gray, 5, 255, cv2.THRESH_BINARY)
         diff_norm = cv2.normalize(diff_gray, None, 0, 255, cv2.NORM_MINMAX)
         heatmap = cv2.applyColorMap(diff_norm, cv2.COLORMAP_JET)

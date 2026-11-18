@@ -50,6 +50,17 @@ def modify_frame(frame_index: int = 2, attack_type: str = "watermark") -> bool:
         # Blur an object area
         roi = img[h // 4: 3 * h // 4, w // 4: 3 * w // 4]
         img[h // 4: 3 * h // 4, w // 4: 3 * w // 4] = cv2.GaussianBlur(roi, (25, 25), 0)
+    elif attack_type == "mask_box":
+        # Digital privacy / redaction mask: solid black occlusion box over central region
+        bx, by = int(w * 0.25), int(h * 0.25)
+        bw, bh = int(w * 0.45), int(h * 0.45)
+        cv2.rectangle(img, (bx, by), (bx + bw, by + bh), (0, 0, 0), -1)
+    elif attack_type == "mask_lens":
+        # Physical camera lens occlusion: complete blackout / covered lens
+        img[:] = 2  # Near total darkness
+    elif attack_type == "mask_spray":
+        # Spray paint / severe obstruction
+        img[:] = cv2.GaussianBlur(img, (55, 55), 0) // 2
 
     # Save back to disk
     cv2.imwrite(filepath, img, [cv2.IMWRITE_PNG_COMPRESSION, 3])
@@ -139,8 +150,8 @@ if __name__ == "__main__":
                         required=True, help="Attack type to simulate")
     parser.add_argument("--frame", type=int, default=2, help="Target frame number (default: 2)")
     parser.add_argument("--frame-b", type=int, default=3, help="Second frame for swap attack (default: 3)")
-    parser.add_argument("--type", choices=["watermark", "single_pixel", "blur"], default="watermark",
-                        help="Modification style for 'modify' attack")
+    parser.add_argument("--type", choices=["watermark", "single_pixel", "blur", "mask_box", "mask_lens", "mask_spray"], default="watermark",
+                        help="Modification style for 'modify' attack (includes digital masking & lens occlusion)")
 
     args = parser.parse_args()
 

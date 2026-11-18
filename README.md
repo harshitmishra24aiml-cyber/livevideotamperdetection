@@ -29,13 +29,15 @@ Digital video recordings captured by CCTV cameras, webcams, and surveillance str
 This project implements a **real-time cryptographic video integrity monitoring system**. By generating a deterministic **SHA-256 hash** for every raw video frame and recursively linking these hashes in a **cryptographic hash chain** ($C_i = \text{SHA256}(C_{i-1} \mathbin{\Vert} i \mathbin{\Vert} H_i)$), any unauthorized modification to even a single pixel or frame index immediately breaks the chain and triggers tamper alerts.
 
 ### 🌟 Key Capabilities
+- **Dual Cryptographic Hashing + Video Masking Detection**: Detects both bit-exact SHA-256 hash mismatches and spatial/temporal video masking attacks (digital redaction boxes, camera lens occlusion/blackout, and static clone inpainting).
+- **Video Upload & Accuracy Inspector**: Dedicated browser and CLI workflow to upload any video file (`.mp4`, `.avi`, `.mov`) and automatically evaluate its **Integrity Accuracy (0% to 100%)** with visual mask bounding boxes and heatmaps.
 - **Multi-Source Ingestion**: Supports Physical Webcams, Pre-recorded Video Files, and an **Animated Synthetic CCTV Surveillance Generator** (for automated headless demonstrations).
 - **Lossless Frame Storage**: Stores video frames in PNG format to preserve bit-exact pixel buffers for deterministic verification.
 - **Append-Only Cryptographic Audit Log**: Records frame metadata, timestamps, frame hashes, previous chain hashes, and current chain hashes in JSON Lines (`hash_log.jsonl`).
-- **Comprehensive Forensic Auditor**: Detects modified pixels, missing/deleted frames, reordered frames, and log corruption.
+- **Comprehensive Forensic Auditor**: Detects modified pixels, missing/deleted frames, reordered frames, digital masks, and log corruption.
 - **Pixel Difference Heatmap Inspector**: Computes side-by-side visual difference heatmaps showing the exact coordinates and bounding box of tampered pixels.
-- **Tamper Attack Simulator**: 1-click cyber-attack simulator to inject watermark stamps, invisible single-pixel flips, frame drops, frame swaps, or log forgery.
-- **Streamlit Cyber Forensics Dashboard**: Complete interactive web interface with live HUD stream recording, blockchain-style chain visualizer, attack lab, and downloadable audit certificates.
+- **Tamper & Mask Attack Simulator**: 1-click cyber-attack simulator to inject digital redaction boxes, lens blackouts, watermark stamps, invisible single-pixel flips, frame drops, frame swaps, or log forgery.
+- **Streamlit Cyber Forensics Dashboard**: Complete 6-tab interactive web interface with live HUD stream recording, video upload & accuracy inspector, blockchain visualizer, attack lab, and downloadable audit certificates.
 
 ---
 

@@ -108,6 +108,33 @@ class TestVideoIntegritySystem(unittest.TestCase):
         self.assertGreaterEqual(result.chain_broken_count + result.tampered_count, 1)
         print("\n[TEST 5 PASSED] Forged audit log detected via cryptographic chain rupture.")
 
+    def test_06_digital_masking_attack(self):
+        """Test 6: Digital box masking must trigger both hash mismatch and mask detection."""
+        tamper_simulator.modify_frame(frame_index=3, attack_type="mask_box")
+        verifier = VideoVerifier(base_dir=TEST_DIR)
+        result = verifier.verify()
+        self.assertFalse(result.is_valid, "Masked video must fail verification")
+        self.assertGreaterEqual(result.masked_count, 1)
+        self.assertEqual(result.first_violation_index, 3)
+        self.assertLess(result.accuracy_percent, 100.0)
+        # Check that Frame 3 status identifies masking
+        f3 = [f for f in result.frame_results if f.index == 3][0]
+        self.assertTrue(f3.is_masked)
+        self.assertEqual(f3.mask_type, "DIGITAL_BOX_MASK")
+        print("\n[TEST 6 PASSED] Digital occlusion box mask detected alongside hash mismatch!")
+
+    def test_07_lens_occlusion_attack(self):
+        """Test 7: Camera lens blackout / occlusion must be detected."""
+        tamper_simulator.modify_frame(frame_index=2, attack_type="mask_lens")
+        verifier = VideoVerifier(base_dir=TEST_DIR)
+        result = verifier.verify()
+        self.assertFalse(result.is_valid, "Occluded video must fail verification")
+        self.assertGreaterEqual(result.masked_count, 1)
+        f2 = [f for f in result.frame_results if f.index == 2][0]
+        self.assertTrue(f2.is_masked)
+        self.assertEqual(f2.mask_type, "LENS_OCCLUSION")
+        print("\n[TEST 7 PASSED] Camera lens blackout occlusion caught by verifier!")
+
 
 if __name__ == "__main__":
     print("\n========================================================")

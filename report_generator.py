@@ -259,6 +259,10 @@ def generate_forensic_html_report(
 
         <div class="kpi-row">
             <div class="kpi-card">
+                <div class="kpi-val">{res.accuracy_percent}%</div>
+                <div class="kpi-label">Integrity Accuracy</div>
+            </div>
+            <div class="kpi-card">
                 <div class="kpi-val">{res.total_checked}</div>
                 <div class="kpi-label">Total Frames</div>
             </div>
@@ -271,8 +275,8 @@ def generate_forensic_html_report(
                 <div class="kpi-label">Tampered Frames</div>
             </div>
             <div class="kpi-card">
-                <div class="kpi-val" style="color: #ea580c;">{res.missing_count}</div>
-                <div class="kpi-label">Missing Frames</div>
+                <div class="kpi-val" style="color: #f59e0b;">{res.masked_count}</div>
+                <div class="kpi-label">Masked Frames</div>
             </div>
         </div>
 

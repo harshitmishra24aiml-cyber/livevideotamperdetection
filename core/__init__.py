@@ -8,6 +8,7 @@ from .audit_logger import AuditLogger
 from .verifier_engine import VideoVerifier, VerificationResult, FrameStatus
 from .ai_tamper_detector import AITamperDetector
 from .rsa_signer import RSASigner
+from .masking_detector import MaskingDetector, MaskingResult
 
 __all__ = [
     "sha256_bytes",
@@ -24,4 +25,6 @@ __all__ = [
     "FrameStatus",
     "AITamperDetector",
     "RSASigner",
+    "MaskingDetector",
+    "MaskingResult",
 ]

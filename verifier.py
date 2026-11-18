@@ -54,21 +54,28 @@ def verify_video(verbose: bool = True):
             print(f"[!] Frame {idx:04d}: ALERT: Missing frame file! ({item.filename})")
         elif item.status == "UNREADABLE":
             print(f"[!] Frame {idx:04d}: ALERT: Frame file unreadable/corrupted!")
-        elif item.status == "TAMPERED":
-            print(f"[X] Frame {idx:04d}: TAMPERING DETECTED! Pixel hash mismatch.")
+        elif "TAMPERED" in item.status:
+            print(f"[X] Frame {idx:04d}: TAMPERING DETECTED! ({item.status})")
             print(f"    Recorded Hash:     {item.recorded_frame_hash}")
             print(f"    Recalculated Hash: {item.recomputed_frame_hash}")
+            if item.is_masked:
+                print(f"    [!] MASKING DETECTED: {item.mask_type} | Bounding Box(es): {item.mask_coords}")
+                print(f"        Detail: {item.mask_details}")
         elif item.status == "CHAIN_BROKEN":
             print(f"[X] Frame {idx:04d}: CHAIN CORRUPTED! Previous hash dependency broken.")
             print(f"    Expected Prev: {item.expected_previous_hash}")
             print(f"    Log Prev:      {item.recorded_previous_hash}")
         else:
             print(f"[X] Frame {idx:04d}: VIOLATION - {item.details}")
+            if item.is_masked:
+                print(f"    [!] MASKING DETECTED: {item.mask_type} | Bounding Box(es): {item.mask_coords}")
 
     print("\n========== VERIFICATION REPORT ==========")
     print(f"Frames checked:         {result.total_checked}")
     print(f"Authentic frames:       {result.authentic_count}")
     print(f"Integrity violations:   {result.tampered_count + result.missing_count + result.chain_broken_count}")
+    print(f"Masked frames detected: {result.masked_count}")
+    print(f"Integrity Accuracy:     {result.accuracy_percent}%")
 
     if result.first_violation_index is not None:
         print(f"First compromised frame: Frame #{result.first_violation_index}")
@@ -79,9 +86,9 @@ def verify_video(verbose: bool = True):
 
     print("------------------------------------------")
     if result.is_valid:
-        print("RESULT: No tampering detected. All frames authentic.")
+        print(f"RESULT: No tampering detected. All frames authentic (Accuracy: {result.accuracy_percent}%).")
     else:
-        print("RESULT: VIDEO INTEGRITY COMPROMISED!")
+        print(f"RESULT: VIDEO INTEGRITY COMPROMISED! (Accuracy: {result.accuracy_percent}%)")
     print("==========================================\n")
 
     return result.is_valid

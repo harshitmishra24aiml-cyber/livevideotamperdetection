@@ -1,0 +1,31 @@
+{
+  "480p (SD)": {
+    "width": 640,
+    "height": 480,
+    "size_mb": 0.879,
+    "avg_ms": 0.512,
+    "max_fps": 1953.2,
+    "throughput_mb_s": 1716.7
+  },
+  "720p (HD)": {
+    "width": 1280,
+    "height": 720,
+    "size_mb": 2.637,
+    "avg_ms": 1.533,
+    "max_fps": 652.5,
+    "throughput_mb_s": 1720.4
+  },
+  "1080p (FHD)": {
+    "width": 1920,
+    "height": 1080,
+    "size_mb": 5.933,
+    "avg_ms": 3.393,
+    "max_fps": 294.8,
+    "throughput_mb_s": 1748.7
+  },
+  "chain_recursion": {
+    "iterations": 50000,
+    "avg_microseconds": 0.872,
+    "links_per_sec": 1147360.0
+  }
+}

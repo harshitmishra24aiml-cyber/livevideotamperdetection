@@ -19,7 +19,48 @@ from PIL import Image
 import streamlit as st
 
 from core.hash_chain import GENESIS_HASH, sha256_bytes, sha256_str, compute_frame_hash, create_chain_hash
-from core.video_engine import VideoStreamSource, SyntheticCCTVGenerator, add_cryptographic_hud, add_dual_sentinel_hud
+from core.video_engine import VideoStreamSource, SyntheticCCTVGenerator, add_cryptographic_hud
+
+# Compatibility guard: older Streamlit deployments may still have a cached
+# video_engine.py without the dual-sentinel HUD helper. Keep startup working
+# and retain a visible masking warning until the updated module is loaded.
+try:
+    from core.video_engine import add_dual_sentinel_hud
+except ImportError:
+    def add_dual_sentinel_hud(
+        frame,
+        frame_index,
+        frame_hash,
+        chain_hash,
+        mask_result=None,
+        is_hash_valid=True,
+        status_override=None,
+    ):
+        status = status_override or (
+            "MASK DETECTED" if mask_result is not None and getattr(mask_result, "is_masked", False)
+            else "CHAIN SECURED"
+        )
+        overlay = add_cryptographic_hud(
+            frame=frame,
+            frame_index=frame_index,
+            frame_hash=frame_hash,
+            chain_hash=chain_hash,
+            status=status,
+            is_valid=is_hash_valid and not (
+                mask_result is not None and getattr(mask_result, "is_masked", False)
+            ),
+        )
+        if mask_result is not None and getattr(mask_result, "is_masked", False):
+            h, w = overlay.shape[:2]
+            mask_type = getattr(mask_result, "mask_type", "MASK DETECTED")
+            for (bx, by, bw, bh) in getattr(mask_result, "bounding_boxes", []) or []:
+                cv2.rectangle(overlay, (bx, by), (bx + bw, by + bh), (0, 0, 255), 2)
+            cv2.rectangle(overlay, (10, 52), (min(w - 10, 390), 88), (0, 0, 150), -1)
+            cv2.putText(
+                overlay, f"MASK ALERT: {mask_type}"[:42], (18, 76),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2
+            )
+        return overlay
 from core.audit_logger import AuditLogger, DEFAULT_BASE_DIR, DEFAULT_FRAME_DIR, DEFAULT_LOG_FILE
 from core.verifier_engine import VideoVerifier, VerificationResult
 from core.masking_detector import MaskingDetector, MaskingResult

@@ -775,17 +775,26 @@ with tab5:
         verifier = VideoVerifier()
         result = verifier.verify()
 
+        # Backward-compatible metric access for older verifier result objects.
+        total_checked = int(getattr(result, "total_checked", 0) or 0)
+        authentic_count = int(getattr(result, "authentic_count", 0) or 0)
+        accuracy = getattr(
+            result,
+            "accuracy_percent",
+            round((authentic_count / total_checked) * 100.0, 1) if total_checked else 0.0,
+        )
+
         if result.is_valid:
             st.markdown(f"""
             <div class="verified-banner">
-                🟢 VERIFICATION PASSED: VIDEO INTEGRITY 100% AUTHENTIC (Accuracy: {result.accuracy_percent}%)<br>
+                🟢 VERIFICATION PASSED: VIDEO INTEGRITY 100% AUTHENTIC (Accuracy: {accuracy}%)<br>
                 <span style="font-size: 0.95rem; font-weight: normal;">All frame hashes match, cryptographic chain continuity is unbroken, and no masking occlusions detected.</span>
             </div>
             """, unsafe_allow_html=True)
         else:
             st.markdown(f"""
             <div class="tampered-banner">
-                🔴 ALERT: VIDEO INTEGRITY COMPROMISED! (Accuracy: {result.accuracy_percent}%)<br>
+                🔴 ALERT: VIDEO INTEGRITY COMPROMISED! (Accuracy: {accuracy}%)<br>
                 <span style="font-size: 0.95rem; font-weight: normal;">
                     Tampering/Masking detected! Found {result.tampered_count} violations ({result.masked_count} masked frames). First violation at <b>Frame #{result.first_violation_index}</b>.
                 </span>
@@ -793,7 +802,7 @@ with tab5:
             """, unsafe_allow_html=True)
 
         m1, m2, m3, m4, m5, m6 = st.columns(6)
-        m1.metric("Accuracy", f"{result.accuracy_percent}%", delta="HIGH" if result.is_valid else "-TAMPERED")
+        m1.metric("Accuracy", f"{accuracy}%", delta="HIGH" if result.is_valid else "-TAMPERED")
         m2.metric("Total Frames", result.total_checked)
         m3.metric("Authentic Frames", result.authentic_count)
         m4.metric("Tampered Frames", result.tampered_count, delta=f"-{result.tampered_count}" if result.tampered_count > 0 else None, delta_color="inverse")
